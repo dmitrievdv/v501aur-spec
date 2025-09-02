@@ -1,3 +1,5 @@
 kurucz-p00/*
 *.dat
 *.csv
+.vscode/settings.json
+*.zip

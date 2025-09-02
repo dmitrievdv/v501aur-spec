@@ -5,9 +5,16 @@ using FITSIO
 using Dierckx
 using DataFrames
 using CSV
+using Printf
 
 function find_near_nodes(x, nodes)
-    x_2 = findfirst(x -> x ≥ 0, nodes .- x)
+    x_2 = findfirst(x -> x ≥ 0.0, nodes .- x)
+    if x_2 == 1
+        return 2, 1
+    end
+    if (isnothing(x_2)) & ((nodes[end] - x) ≥ -1e-3)
+        return length(nodes), length(nodes) - 1
+    end 
     return x_2 - 1, x_2
 end
 
@@ -100,8 +107,44 @@ function calc_tess_kurucz_flux_with_extinction(T_eff, logg, Av)
     Δλs_kurucz = λs[2:end] - λs[1:end-1]
     λs_mid_kurucz = (λs[2:end] + λs[1:end-1])/2
     kurucz_spec_mid = (kurucz_spec[2:end] + kurucz_spec[1:end-1])/2
-    return sum(@. kurucz_spec_mid * tess_response_spl(λs_mid_kurucz) * extinct_law(λs_mid_kurucz, Av) * Δλs_kurucz)
+    return sum(@. kurucz_spec_mid * tess_response_spl(λs_mid_kurucz) * exp(-extinct_law(λs_mid_kurucz, Av)) * Δλs_kurucz)
 end
 
+Av = 0.54 * 3.1
+
 tess_rel_no_Av = calc_tess_kurucz_flux_no_extinction(7800, 4.2)/calc_tess_kurucz_flux_no_extinction(4700, 2.2)*1.5^2/26.6^2
-tess_rel_Av = calc_tess_kurucz_flux_with_extinction(7800, 4.2, 1.6)/calc_tess_kurucz_flux_with_extinction(4700, 2.2, 1.6)*1.5^2/26.6^2
+tess_rel_Av = calc_tess_kurucz_flux_with_extinction(7800, 4.2, Av)/calc_tess_kurucz_flux_with_extinction(4700, 2.2, Av)*1.5^2/26.6^2
+
+logg_grid = [1.5:0.1:5.0;]
+T_eff_grid = [3500:1e2:10000;]
+
+n_logg = length(logg_grid)
+n_T_eff = length(T_eff_grid)
+
+tess_rel_Av_arr = zeros(n_logg, n_T_eff)
+tess_rel_arr = zeros(n_logg, n_T_eff)
+
+for (i_logg, logg) in enumerate(logg_grid)
+    for (i_T_eff, T_eff) in enumerate(T_eff_grid)
+        if (T_eff > 9250) & (logg < 2.0)
+            tess_rel_arr[i_logg, i_T_eff] = -1.0
+            tess_rel_Av_arr[i_logg, i_T_eff] = -1.0
+        else
+            tess_rel_arr[i_logg, i_T_eff] = calc_tess_kurucz_flux_no_extinction(T_eff, logg)
+            tess_rel_Av_arr[i_logg, i_T_eff] = calc_tess_kurucz_flux_with_extinction(T_eff, logg, Av)
+        end
+    end
+end
+
+mkpath("tess-tables/")
+for (i_T_eff, T_eff) in enumerate(T_eff_grid)
+    open("tess-tables/tess_flux_$(round(Int, T_eff)).dat", "w") do io
+        println(io, "# TESS fluxes for T_eff = $(round(Int, T_eff)).")
+        println(io, "# Fluxes are in arbitrary units, meant to only be used in relation to each other.")
+        println(io, "# Negative numbers mean that this (T_eff, logg) combination is invalid for Kurucz, 1993 models.")
+        println(io, "# Columns: logg, flux, flux with extinction. \n")
+        for i_logg in 1:n_logg
+            @printf io "%5f %10e %10e \n" logg_grid[i_logg] tess_rel_arr[i_logg, i_T_eff] tess_rel_Av_arr[i_logg, i_T_eff]
+        end
+    end
+end
